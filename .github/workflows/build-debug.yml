@@ -6,15 +6,19 @@ on:
     branches: [ "main" ]
     paths-ignore:
       - '**.md'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/FUNDING.yml'
 
 jobs:
   build:
+    name: Build Debug APK (arm64)
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     env:
       CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
       CCACHE_HARDLINK: "true"
       CCACHE_NOHASHDIR: "true"
-      CCACHE_MAXSIZE: "8G"
+      CCACHE_MAXSIZE: "10G"
 
     steps:
       - name: Checkout
@@ -28,13 +32,17 @@ jobs:
 
       - name: Set up ccache
         uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ runner.os }}-ccache-debug
+          restore-keys: |
+            ${{ runner.os }}-ccache-
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           cache-read-only: false
 
-      - name: Set up Android SDK
+      - name: Set up Android SDK + NDK
         uses: android-actions/setup-android@v3
         with:
           packages: "build-tools;36.1.0 ndk;27.3.13750724 platforms;android-36"
@@ -42,12 +50,9 @@ jobs:
       - name: Configure Gradle properties
         run: |
           mkdir -p ~/.gradle
-          echo 'org.gradle.caching=true' >> ~/.gradle/gradle.properties
-          echo 'org.gradle.parallel=true' >> ~/.gradle/gradle.properties
-          echo 'org.gradle.jvmargs=-Xmx8192m -Dfile.encoding=UTF-8 -XX:+UseParallelGC' >> ~/.gradle/gradle.properties
-          echo 'android.native.buildOutput=verbose' >> ~/.gradle/gradle.properties
+          printf 'org.gradle.caching=true\norg.gradle.parallel=true\norg.gradle.jvmargs=-Xmx8192m -Dfile.encoding=UTF-8 -XX:+UseParallelGC\nandroid.native.buildOutput=verbose\n' >> ~/.gradle/gradle.properties
 
-      - name: Configure local.properties (API credentials)
+      - name: Configure local.properties
         run: |
           echo "apiId=${{ secrets.API_ID }}" >> local.properties
           echo "apiHash=${{ secrets.API_HASH }}" >> local.properties
@@ -64,12 +69,15 @@ jobs:
         run: |
           echo "${{ secrets.SENTRY_PROPERTIES }}" | base64 --decode > sentry.properties
 
-      - name: Build Debug APK
-        run: ./gradlew :TMessagesProj_App:assembleDebug
+      - name: Build arm64 Debug APK
+        run: |
+          ./gradlew :TMessagesProj_App:assembleDebug \
+            -Pandroid.injected.build.abi=arm64-v8a \
+            --no-daemon
 
-      - name: Upload universal debug APK
+      - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: Nekogram-debug-APKs
-          path: TMessagesProj_App/build/outputs/apk/debug/
+          name: Nekogram-debug-arm64
+          path: TMessagesProj_App/build/outputs/apk/debug/*.apk
           retention-days: 30
