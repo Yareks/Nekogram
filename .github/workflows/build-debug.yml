@@ -29,7 +29,6 @@ jobs:
         run: sudo apt-get install -y ccache
 
       - name: Restore ccache
-        id: restore-ccache
         uses: actions/cache/restore@v4
         with:
           path: ~/.ccache
@@ -58,20 +57,29 @@ jobs:
       - name: Configure Gradle properties
         run: |
           mkdir -p ~/.gradle
-          printf 'org.gradle.caching=true\norg.gradle.parallel=true\norg.gradle.jvmargs=-Xmx8192m -Dfile.encoding=UTF-8 -XX:+UseParallelGC\nandroid.native.buildOutput=verbose\n' >> ~/.gradle/gradle.properties
+          cat >> ~/.gradle/gradle.properties << 'EOF'
+          org.gradle.caching=true
+          org.gradle.parallel=true
+          org.gradle.jvmargs=-Xmx8192m -Dfile.encoding=UTF-8 -XX:+UseParallelGC
+          android.native.buildOutput=verbose
+          EOF
 
       - name: Configure local.properties
         run: |
-          echo "apiId=${{ secrets.API_ID }}" >> local.properties
-          echo "apiHash=${{ secrets.API_HASH }}" >> local.properties
-          echo "helperBotId=0" >> local.properties
-          echo "helperBotUsername=null" >> local.properties
-          echo "sentryDsn=" >> local.properties
-          echo "mapsApiKey=" >> local.properties
+          cat >> local.properties << 'EOF'
+          apiId=${{ secrets.API_ID }}
+          apiHash=${{ secrets.API_HASH }}
+          helperBotId=0
+          helperBotUsername=null
+          sentryDsn=
+          mapsApiKey=
+          EOF
 
       - name: Place google-services.json
         run: |
           echo "${{ secrets.GOOGLE_SERVICES_JSON }}" | base64 --decode > TMessagesProj_App/google-services.json
+          echo "--- google-services.json package names ---"
+          python3 -c "import json; d=json.load(open('TMessagesProj_App/google-services.json')); [print(c['client_info']['android_client_info']['package_name']) for c in d['client']]"
 
       - name: Place sentry.properties
         run: |
@@ -80,29 +88,25 @@ jobs:
       - name: Set up ccache symlinks for NDK
         run: |
           mkdir -p "$HOME/.local/bin"
-          ln -sf $(which ccache) "$HOME/.local/bin/gcc"
-          ln -sf $(which ccache) "$HOME/.local/bin/g++"
           ln -sf $(which ccache) "$HOME/.local/bin/clang"
           ln -sf $(which ccache) "$HOME/.local/bin/clang++"
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      - name: Patch build.gradle — arm64-v8a only
-        run: |
-          # Вставляем abiFilters в defaultConfig TMessagesProj_App
-          sed -i '/splits\.abi {/,/}/{ /include "armeabi-v7a", "arm64-v8a", "x86", "x86_64"/d; /universalApk true/d; }' TMessagesProj_App/build.gradle
-          sed -i 's/include "armeabi-v7a", "arm64-v8a", "x86", "x86_64"/include "arm64-v8a"/g' TMessagesProj_App/build.gradle || true
-          # Добавляем abiFilters в TMessagesProj defaultConfig
-          sed -i '/vectorDrawables {/i\        ndk { abiFilters "arm64-v8a" }' TMessagesProj/build.gradle || true
-          echo "=== TMessagesProj_App/build.gradle splits section ==="
-          grep -A10 "splits" TMessagesProj_App/build.gradle || true
-
       - name: Build arm64-v8a Debug APK
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.3.13750724
         run: |
-          export ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.3.13750724
           ./gradlew :TMessagesProj_App:assembleDebug \
             -Pandroid.injected.build.abi=arm64-v8a \
             --no-daemon \
-            --stacktrace
+            --stacktrace \
+            2>&1 | tee build.log
+          # Показываем только ошибки если билд упал
+          if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo "=== BUILD ERRORS ==="
+            grep -E "error:|FAILED|Exception|Caused by" build.log | head -40
+            exit 1
+          fi
 
       - name: Show ccache stats
         if: always()
@@ -115,13 +119,15 @@ jobs:
           path: ~/.ccache
           key: ccache-ndk-arm64-${{ github.sha }}
 
-      - name: Find APK
-        run: find . -name "*.apk" | head -20
+      - name: List APK output
+        run: |
+          echo "=== APK files ==="
+          find TMessagesProj_App/build/outputs/apk -name "*.apk" -exec ls -lh {} \;
 
       - name: Upload Debug APK (arm64-v8a)
         uses: actions/upload-artifact@v4
         with:
           name: Nekogram-debug-arm64-v8a
-          path: TMessagesProj_App/build/outputs/apk/debug/*arm64*.apk
+          path: TMessagesProj_App/build/outputs/apk/debug/*.apk
           retention-days: 30
-          if-no-files-found: warn
+          if-no-files-found: error
