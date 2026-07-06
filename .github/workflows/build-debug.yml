@@ -16,16 +16,23 @@ jobs:
     timeout-minutes: 180
 
     steps:
+      - name: Maximize disk and memory
+        run: |
+          # Показываем текущее состояние
+          free -h
+          df -h
+          # Добавляем swap если нет достаточного
+          SWAP_TOTAL=$(free -m | awk '/^Swap:/ {print $2}')
+          if [ "$SWAP_TOTAL" -lt 4096 ]; then
+            sudo dd if=/dev/zero of=/swap bs=1M count=8192 status=progress
+            sudo chmod 600 /swap
+            sudo mkswap /swap
+            sudo swapon /swap
+          fi
+          free -h
+
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Add swap space (8GB)
-        run: |
-          sudo fallocate -l 8G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
-          free -h
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
@@ -74,7 +81,8 @@ jobs:
 
       - name: Configure local.properties
         run: |
-          cat >> local.properties << 'EOF'
+          cat > local.properties << EOF
+          sdk.dir=$ANDROID_SDK_ROOT
           apiId=${{ secrets.API_ID }}
           apiHash=${{ secrets.API_HASH }}
           helperBotId=0
@@ -105,9 +113,7 @@ jobs:
         run: |
           ./gradlew :TMessagesProj_App:assembleDebug \
             -Pandroid.injected.build.abi=arm64-v8a \
-            -Pandroid.builder.sdkpath="$ANDROID_SDK_ROOT" \
-            --no-daemon \
-            --info
+            --no-daemon
 
       - name: Show ccache stats
         if: always()
