@@ -11,7 +11,7 @@ on:
 
 jobs:
   build:
-    name: Build Debug APK (arm64)
+    name: Build Debug APK (arm64-v8a)
     runs-on: ubuntu-24.04
     timeout-minutes: 120
 
@@ -86,7 +86,17 @@ jobs:
           ln -sf $(which ccache) "$HOME/.local/bin/clang++"
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      - name: Build arm64 Debug APK
+      - name: Patch build.gradle — arm64-v8a only
+        run: |
+          # Вставляем abiFilters в defaultConfig TMessagesProj_App
+          sed -i '/splits\.abi {/,/}/{ /include "armeabi-v7a", "arm64-v8a", "x86", "x86_64"/d; /universalApk true/d; }' TMessagesProj_App/build.gradle
+          sed -i 's/include "armeabi-v7a", "arm64-v8a", "x86", "x86_64"/include "arm64-v8a"/g' TMessagesProj_App/build.gradle || true
+          # Добавляем abiFilters в TMessagesProj defaultConfig
+          sed -i '/vectorDrawables {/i\        ndk { abiFilters "arm64-v8a" }' TMessagesProj/build.gradle || true
+          echo "=== TMessagesProj_App/build.gradle splits section ==="
+          grep -A10 "splits" TMessagesProj_App/build.gradle || true
+
+      - name: Build arm64-v8a Debug APK
         run: |
           export ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.3.13750724
           ./gradlew :TMessagesProj_App:assembleDebug \
@@ -105,10 +115,13 @@ jobs:
           path: ~/.ccache
           key: ccache-ndk-arm64-${{ github.sha }}
 
-      - name: Upload Debug APK
+      - name: Find APK
+        run: find . -name "*.apk" | head -20
+
+      - name: Upload Debug APK (arm64-v8a)
         uses: actions/upload-artifact@v4
         with:
-          name: Nekogram-debug-arm64
-          path: TMessagesProj_App/build/outputs/apk/debug/*.apk
+          name: Nekogram-debug-arm64-v8a
+          path: TMessagesProj_App/build/outputs/apk/debug/*arm64*.apk
           retention-days: 30
           if-no-files-found: warn
