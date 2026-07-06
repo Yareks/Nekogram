@@ -12,13 +12,8 @@ on:
 jobs:
   build:
     name: Build Debug APK (arm64)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
-    env:
-      CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
-      CCACHE_HARDLINK: "true"
-      CCACHE_NOHASHDIR: "true"
-      CCACHE_MAXSIZE: "10G"
 
     steps:
       - name: Checkout
@@ -30,12 +25,25 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      - name: Set up ccache
-        uses: hendrikmuhs/ccache-action@v1.2
+      - name: Install ccache
+        run: sudo apt-get install -y ccache
+
+      - name: Restore ccache
+        id: restore-ccache
+        uses: actions/cache/restore@v4
         with:
-          key: ${{ runner.os }}-ccache-debug
+          path: ~/.ccache
+          key: ccache-ndk-arm64-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-ccache-
+            ccache-ndk-arm64-
+
+      - name: Configure ccache
+        run: |
+          ccache --max-size=10G
+          ccache --set-config=compiler_check="%compiler% -dumpmachine; %compiler% -dumpversion"
+          ccache --set-config=hash_dir=false
+          ccache --set-config=hard_link=true
+          ccache -z
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -69,11 +77,33 @@ jobs:
         run: |
           echo "${{ secrets.SENTRY_PROPERTIES }}" | base64 --decode > sentry.properties
 
+      - name: Set up ccache symlinks for NDK
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          ln -sf $(which ccache) "$HOME/.local/bin/gcc"
+          ln -sf $(which ccache) "$HOME/.local/bin/g++"
+          ln -sf $(which ccache) "$HOME/.local/bin/clang"
+          ln -sf $(which ccache) "$HOME/.local/bin/clang++"
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
       - name: Build arm64 Debug APK
         run: |
+          export ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.3.13750724
           ./gradlew :TMessagesProj_App:assembleDebug \
             -Pandroid.injected.build.abi=arm64-v8a \
-            --no-daemon
+            --no-daemon \
+            --stacktrace
+
+      - name: Show ccache stats
+        if: always()
+        run: ccache -s
+
+      - name: Save ccache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.ccache
+          key: ccache-ndk-arm64-${{ github.sha }}
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
@@ -81,3 +111,4 @@ jobs:
           name: Nekogram-debug-arm64
           path: TMessagesProj_App/build/outputs/apk/debug/*.apk
           retention-days: 30
+          if-no-files-found: warn
