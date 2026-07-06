@@ -125,15 +125,19 @@ jobs:
           path: ~/.ccache
           key: ccache-ndk-arm64-${{ github.sha }}
 
-      - name: Find all APKs
-        run: find . -name "*.apk" 2>/dev/null | head -20 || echo "No APK found"
+      - name: Find and move APK to upload dir
+        run: |
+          mkdir -p apk-output
+          find . -name "*.apk" | grep -v "\.gradle" | while read f; do
+            echo "Found: $f ($(du -sh "$f" | cut -f1))"
+            cp "$f" apk-output/
+          done
+          ls -lh apk-output/
 
       - name: Upload Debug APK (arm64-v8a)
         uses: actions/upload-artifact@v4
         with:
           name: Nekogram-debug-arm64-v8a
-          path: |
-            TMessagesProj_App/build/outputs/apk/**/*.apk
-            **/build/outputs/apk/**/*.apk
+          path: apk-output/*.apk
           retention-days: 30
-          if-no-files-found: warn
+          if-no-files-found: error
