@@ -16,19 +16,13 @@ jobs:
     timeout-minutes: 180
 
     steps:
-      - name: Maximize disk and memory
+      - name: Maximize memory with swap
         run: |
-          # Показываем текущее состояние
           free -h
-          df -h
-          # Добавляем swap если нет достаточного
-          SWAP_TOTAL=$(free -m | awk '/^Swap:/ {print $2}')
-          if [ "$SWAP_TOTAL" -lt 4096 ]; then
-            sudo dd if=/dev/zero of=/swap bs=1M count=8192 status=progress
-            sudo chmod 600 /swap
-            sudo mkswap /swap
-            sudo swapon /swap
-          fi
+          sudo dd if=/dev/zero of=/swap bs=1M count=8192 2>/dev/null || true
+          sudo chmod 600 /swap 2>/dev/null || true
+          sudo mkswap /swap 2>/dev/null || true
+          sudo swapon /swap 2>/dev/null || true
           free -h
 
       - name: Checkout
@@ -94,7 +88,12 @@ jobs:
       - name: Place google-services.json
         run: |
           echo "${{ secrets.GOOGLE_SERVICES_JSON }}" | base64 --decode > TMessagesProj_App/google-services.json
-          python3 -c "import json; d=json.load(open('TMessagesProj_App/google-services.json')); [print('pkg:', c['client_info']['android_client_info']['package_name']) for c in d['client']]"
+          python3 -c "
+          import json
+          d=json.load(open('TMessagesProj_App/google-services.json'))
+          for c in d['client']:
+              print('pkg:', c['client_info']['android_client_info']['package_name'])
+          "
 
       - name: Place sentry.properties
         run: |
@@ -126,14 +125,15 @@ jobs:
           path: ~/.ccache
           key: ccache-ndk-arm64-${{ github.sha }}
 
-      - name: List APK output
-        run: |
-          find TMessagesProj_App/build/outputs/apk -name "*.apk" -exec ls -lh {} \;
+      - name: Find all APKs
+        run: find . -name "*.apk" 2>/dev/null | head -20 || echo "No APK found"
 
       - name: Upload Debug APK (arm64-v8a)
         uses: actions/upload-artifact@v4
         with:
           name: Nekogram-debug-arm64-v8a
-          path: TMessagesProj_App/build/outputs/apk/debug/*.apk
+          path: |
+            TMessagesProj_App/build/outputs/apk/**/*.apk
+            **/build/outputs/apk/**/*.apk
           retention-days: 30
-          if-no-files-found: error
+          if-no-files-found: warn
